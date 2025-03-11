@@ -6,6 +6,9 @@
 #include <cstring>
 #include <string_view>
 
+#define ENABLE_LOGGING
+#include "logger.hpp"
+
 namespace arttree {
 
 struct ArtTreeDefs {
@@ -18,39 +21,36 @@ struct Node;
 
 struct NodeLeaf {
   size_t key_len, val_len;
-  char *key;
-  char *val;
+  char *raw;
 
   NodeLeaf(std::string_view k, std::string_view v) {
     key_len = k.size();
     val_len = v.size();
 
-    key = new char[key_len];
-    val = new char[val_len];
+    raw = new char[key_len + val_len];
+    memcpy(raw, k.data(), key_len);
+    memcpy(raw + key_len, v.data(), val_len);
   }
 
-  ~NodeLeaf() {
-    if (key) {
-      delete[] key;
-    }
+  inline std::string_view load_key() const { return {raw, key_len}; }
 
-    if (val) {
-      delete[] val;
-    }
-  }
+  inline std::string_view load_val() const { return {raw + key_len, val_len}; }
+
+  ~NodeLeaf() { delete[] raw; }
 };
 
 struct Node4 {
-  char key[4];
-  Node *children[4];
+  char key[4]{};
+  Node *children[4]{};
 
   Node4() { memset(children, 0, sizeof(Node *) * 4); }
 
   inline bool add_child(char ch, Node *child) {
     for (size_t i = 0; i < 4; ++i) {
-      if (!children[i]) {
+      if (children[i] == nullptr) {
         children[i] = child;
         key[i] = ch;
+        return true;
       }
     }
     return false;
@@ -90,12 +90,36 @@ struct Node {
   size_t prefix_len{0};
   void *inner{nullptr};
 
+  ~Node() {
+    if (inner) {
+      switch (type) {
+      case NodeType::Node4:
+        delete (Node4 *)inner;
+        break;
+      case NodeType::Node16:
+        delete (Node16 *)inner;
+        break;
+      case NodeType::Node48:
+        delete (Node48 *)inner;
+        break;
+      case NodeType::Node256:
+        delete (Node256 *)inner;
+        break;
+      case NodeType::Leaf:
+        delete (NodeLeaf *)inner;
+        break;
+      default:
+        assert(false && "Invalid node type");
+      }
+    }
+  }
+
   inline bool is_leaf() const { return type == NodeType::Leaf; }
 
   inline std::string_view load_key() const {
     assert(this->type == NodeType::Leaf);
     auto leaf = (NodeLeaf *)inner;
-    return std::string_view{leaf->key, leaf->key_len};
+    return leaf->load_key();
   }
 
   size_t check_prefix(std::string_view key, size_t depth) {
@@ -181,6 +205,7 @@ struct Node {
       break;
     case NodeType::Leaf:
       n->inner = new NodeLeaf{leaf_key, leaf_val};
+      break;
     default:
       delete n;
       assert(false && "Invalid node type");
@@ -192,22 +217,78 @@ struct Node {
 
 class ArtTree {
 public:
+  ~ArtTree() {
+    destory(root_);
+  }
+
   bool insert(std::string_view key, std::string_view val);
+  bool search(std::string_view key, std::string_view &val);
 
 private:
   bool insert(Node *&cur, const std::string_view &key, Node *leaf,
               size_t depth);
 
+  void destory(Node *n) {
+    if (n == nullptr) {
+      return;
+    }
+
+    switch (n->type) {
+    case NodeType::Node4: {
+      Node4 *n4 = (Node4 *)n->inner;
+      for (size_t i = 0; i < 4; i++) {
+        if (n4->children[i]) {
+          LOG_INFO << "destory node4 child " << i;
+          destory(n4->children[i]);
+        }
+      }
+    } break;
+    default:
+      // TODO
+      break;
+    }
+
+    delete n;
+  }
+
   Node *root_;
 };
 
-inline bool ArtTree::insert(std::string_view key, std::string_view val) {
+inline bool ArtTree::search(std::string_view key, std::string_view &val) {
+  Node *cur = root_;
+  size_t depth = 0;
+  while (cur) {
+    if (cur->is_leaf()) {
+      if (cur->load_key() == key) {
+        NodeLeaf *leaf = (NodeLeaf *)cur->inner;
+        val = leaf->load_val();
+        return true;
+      }
+      return false;
+    }
+
+    size_t p = cur->check_prefix(key, depth);
+    if (p != cur->prefix_len) {
+      return false;
+    }
+
+    depth += cur->prefix_len;
+    cur = cur->find_child(key[depth]);
+    depth++;
+  }
+
   return false;
 }
 
-inline bool ArtTree::insert(Node *&node, const std::string_view &key, Node *leaf,
-                     size_t depth) {
+inline bool ArtTree::insert(std::string_view key, std::string_view val) {
+  Node *leaf = Node::make_node(NodeType::Leaf, key, val);
+  return insert(root_, key, leaf, 0);
+}
+
+inline bool ArtTree::insert(Node *&node, const std::string_view &key,
+                            Node *leaf, size_t depth) {
   if (node == nullptr) {
+    LOG_INFO << "insert leaf" << key << " " << depth;
     node = leaf;
     return true;
   }
@@ -227,6 +308,9 @@ inline bool ArtTree::insert(Node *&node, const std::string_view &key, Node *leaf
     new_node->add_child(key2[depth], node);
     // replace
     node = new_node;
+
+    LOG_INFO << "node is leaf, create new node4" << new_node->prefix << " "
+             << new_node->prefix_len;
     return true;
   }
 
@@ -243,6 +327,8 @@ inline bool ArtTree::insert(Node *&node, const std::string_view &key, Node *leaf
     node->prefix_len = node->prefix_len - p;
     memmove(node->prefix, node->prefix + p + 1, node->prefix_len);
 
+    LOG_INFO << "prefix mismatch, create new node4" << new_node->prefix << " "
+             << new_node->prefix_len;
     // replace
     node = new_node;
     return true;
@@ -252,6 +338,8 @@ inline bool ArtTree::insert(Node *&node, const std::string_view &key, Node *leaf
   depth += node->prefix_len;
   // find next
   Node *next = node->find_child(key[depth]);
+
+  LOG_INFO << "find next node" << key[depth] << " " << depth;
   if (next) {
     return insert(next, key, leaf, depth + 1);
   } else {
