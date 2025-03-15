@@ -18,7 +18,37 @@ TEST(NodeTest, node4_test) {
   ASSERT_EQ(*n4->find_child('d'), &leaf);
   ASSERT_EQ(n4->find_child('e'), nullptr);
 
+  // iter test
+  int i = 0;
+  for (auto child = n4->begin<Node4>(); child != n4->end<Node4>(); ++child) {
+    auto [node, key] = *child;
+    i++;
+    std::cout << i << std::endl;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + i - 1);
+  }
+
+  ASSERT_EQ(i, 4);
+
+  // node4 with 3 children
+  Node *n4_2 = Node::make_node(NodeType::Node4, "", "");
+  n4_2->add_child('a', &leaf);
+  n4_2->add_child('b', &leaf);
+  n4_2->add_child('c', &leaf);
+
+  i = 0;
+  for (auto child = n4_2->begin<Node4>(); child != n4_2->end<Node4>();
+       ++child) {
+    auto [node, key] = *child;
+    i++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + i - 1);
+  }
+
+  ASSERT_EQ(i, 3);
+
   delete n4;
+  delete n4_2;
 }
 
 // 16
@@ -33,6 +63,31 @@ TEST(NodeTest, node16_test) {
 
   for (int i = 0; i < 16; i++) {
     ASSERT_EQ(*n16->find_child('a' + i), &leaf);
+  }
+
+  // iter test
+  int j = 0;
+  for (auto child = n16->begin<Node16>(); child != n16->end<Node16>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + j - 1);
+  }
+
+  // 13 children
+  Node *n16_2 = Node::make_node(NodeType::Node16, "", "");
+  for (int i = 0; i < 13; i++) {
+    n16_2->add_child('a' + i, &leaf);
+  }
+
+  j = 0;
+  for (auto child = n16_2->begin<Node16>(); child != n16_2->end<Node16>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + j - 1);
   }
 
   delete n16;
@@ -52,6 +107,31 @@ TEST(NodeTest, node48_test) {
     ASSERT_EQ(*n48->find_child('a' + i), &leaf);
   }
 
+  // iter test
+  int j = 0;
+  for (auto child = n48->begin<Node48>(); child != n48->end<Node48>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + j - 1);
+  }
+
+  // 21 children
+  Node *n48_2 = Node::make_node(NodeType::Node48, "", "");
+  for (int i = 0; i < 21; i++) {
+    ASSERT_TRUE(n48_2->add_child('a' + i, &leaf));
+  }
+
+  j = 0;
+  for (auto child = n48_2->begin<Node48>(); child != n48_2->end<Node48>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, 'a' + j - 1);
+  }
+
   delete n48;
 }
 
@@ -67,6 +147,32 @@ TEST(NodeTest, node256_test) {
 
   for (int i = 0; i < 256; i++) {
     ASSERT_EQ(*n256->find_child(i), &leaf);
+  }
+
+  // iter test
+
+  int j = 0;
+  for (auto child = n256->begin<Node256>(); child != n256->end<Node256>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, j - 1);
+  }
+
+  // 21 children
+  Node *n256_2 = Node::make_node(NodeType::Node256, "", "");
+  for (int i = 0; i < 21; i++) {
+    ASSERT_TRUE(n256_2->add_child(i, &leaf));
+  }
+
+  j = 0;
+  for (auto child = n256_2->begin<Node256>(); child != n256_2->end<Node256>();
+       ++child) {
+    auto [node, key] = *child;
+    j++;
+    ASSERT_EQ(node, &leaf);
+    ASSERT_EQ(key, j - 1);
   }
 
   delete n256;
@@ -105,8 +211,7 @@ TEST(NodeTest, grow_test) {
   // 插满
   for (; i < 48; i++) {
     children.push_back(new Node{});
-    std::cout << "add child " <<  i << " " << children[i]
-              << std::endl;
+    std::cout << "add child " << i << " " << children[i] << std::endl;
     if (i == 47) {
       int m = 0;
     }

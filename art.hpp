@@ -94,6 +94,8 @@ struct NodeLeaf {
   size_t key_len, val_len;
   unsigned char *raw;
 
+  static NodeType type() { return NodeType::Leaf; }
+
   NodeLeaf(std::string_view k, std::string_view v) {
     key_len = k.size();
     val_len = v.size();
@@ -131,8 +133,49 @@ public:
 
   Node4() {
     memset(children, 0, sizeof(Node *) * 4);
+    memset(key, 0, 5);
     key[4] = 0;
     bitmap_ = Bitmap(key + 4, 1);
+  }
+
+  static NodeType type() { return NodeType::Node4; }
+
+  /**
+   * \brief An iterator for the Node4 class.
+   * The end iterator is when index_ == 4!!!!
+   * */
+  class Iterator {
+  public:
+    Iterator(Node **node, unsigned char *key, size_t index)
+        : node_(node), key_(key), index_(index) {}
+
+    Iterator &operator++() {
+      index_++;
+      return *this;
+    }
+
+    std::pair<Node *, unsigned char> operator*() const {
+      return {node_[index_], key_[index_]};
+    }
+
+    bool operator!=(const Iterator &other) const {
+      return node_ != other.node_ || index_ != other.index_;
+    }
+
+  private:
+    Node **node_;
+    unsigned char *key_;
+    size_t index_;
+  };
+
+  Iterator begin() { return {children, key, 0}; }
+  Iterator end() {
+    for (size_t i = 0; i < 4; i++) {
+      if (children[i] == nullptr) {
+        return {children, key, i};
+      }
+    }
+    return {children, key, 4};
   }
 
   /**
@@ -181,7 +224,7 @@ public:
   }
 
 private:
-  Bitmap bitmap_;
+  Bitmap bitmap_{};
 };
 
 /**
@@ -190,10 +233,47 @@ private:
  */
 class Node16 {
 public:
-  unsigned char key[16]{};
+  // TODO mark leaf node
+  unsigned char key[18]{};
   Node *children[16]{};
 
+  static NodeType type() { return NodeType::Node16; }
+
   Node16() { memset(children, 0, sizeof(Node *) * 16); }
+
+  class Iterator {
+  public:
+    Iterator(Node **node, unsigned char *key, size_t index)
+        : node_(node), key_(key), index_(index) {}
+
+    Iterator &operator++() {
+      index_++;
+      return *this;
+    }
+
+    std::pair<Node *, unsigned char> operator*() const {
+      return {node_[index_], key_[index_]};
+    }
+
+    bool operator!=(const Iterator &other) const {
+      return node_ != other.node_ || index_ != other.index_;
+    }
+
+  private:
+    Node **node_;
+    unsigned char *key_;
+    size_t index_;
+  };
+
+  Iterator begin() { return {children, key, 0}; }
+  Iterator end() {
+    for (size_t i = 0; i < 16; i++) {
+      if (children[i] == nullptr) {
+        return {children, key, i};
+      }
+    }
+    return {children, key, 16};
+  }
 
   /**
    * \brief Add a child to the node.
@@ -233,13 +313,57 @@ public:
  */
 class Node48 {
 public:
+  // TODO mark leaf node
   Node *children[48]{};
-  uint8_t child_index[256]{};
+  int8_t child_index[256]{};
+
+  static NodeType type() { return NodeType::Node48; }
 
   Node48() {
     memset(children, 0, sizeof(Node *) * 48);
-    memset(child_index, 0xFF, sizeof(child_index));
+    // set all child index to -1
+    memset(child_index, -1, sizeof(int8_t) * 256);
   }
+
+  class Iterator {
+    friend class Node48;
+
+  public:
+    Iterator(Node **node, int8_t *child_index, size_t index)
+        : node_(node), child_index_(child_index), index_(index) {}
+
+    Iterator &operator++() {
+      index_++;
+      skip_null();
+      return *this;
+    }
+
+    std::pair<Node *, unsigned char> operator*() const {
+      return {node_[child_index_[index_]], static_cast<unsigned char>(index_)};
+    }
+
+    bool operator!=(const Iterator &other) const {
+      return node_ != other.node_ || index_ != other.index_;
+    }
+
+  private:
+    void skip_null() {
+      while (index_ < 256 && child_index_[index_] == -1) {
+        index_++;
+      }
+    }
+
+    Node **node_;
+    int8_t *child_index_;
+    size_t index_;
+  };
+
+  Iterator begin() {
+    Iterator it{children, child_index, 0};
+    it.skip_null();
+    return it;
+  }
+  Iterator end() { return {children, child_index, 256}; }
 
   /**
    * \brief Add a child to the node.
@@ -256,7 +380,6 @@ public:
         return true;
       }
     }
-    LOG_WARNING << "Node48 is full";
     return false;
   }
 
@@ -282,7 +405,48 @@ class Node256 {
 public:
   Node *children[256]{};
 
+  static NodeType type() { return NodeType::Node256; }
+
   Node256() { memset(children, 0, sizeof(Node *) * 256); }
+
+  class Iterator {
+    friend class Node256;
+
+  public:
+    Iterator(Node **node, size_t index) : node_(node), index_(index) {}
+
+    Iterator &operator++() {
+      index_++;
+      skip_null();
+      return *this;
+    }
+
+    std::pair<Node *, unsigned char> operator*() const {
+      return {node_[index_], static_cast<unsigned char>(index_)};
+    }
+
+    bool operator!=(const Iterator &other) const {
+      return node_ != other.node_ || index_ != other.index_;
+    }
+
+  private:
+    void skip_null() {
+      while (index_ < 256 && node_[index_] == nullptr) {
+        index_++;
+      }
+    }
+
+    Node **node_;
+    size_t index_;
+  };
+
+  Iterator begin() {
+    Iterator it{children, 0};
+    it.skip_null();
+    return it;
+  }
+
+  Iterator end() { return {children, 256}; }
 
   /**
    * \brief Add a child to the node.
@@ -322,6 +486,15 @@ struct Node {
   unsigned char prefix[ArtTreeDefs::MAX_PREFIX_LEN];
   size_t prefix_len{0};
   void *inner{nullptr};
+
+  template <typename T> T *get_inner() {
+    assert(T::type() == type);
+    return (T *)inner;
+  }
+
+  template <typename T> auto begin() { return get_inner<T>()->begin(); }
+
+  template <typename T> auto end() { return get_inner<T>()->end(); }
 
   void grow() {
     switch (type) {
